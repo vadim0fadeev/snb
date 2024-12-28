@@ -1,67 +1,160 @@
-buildscript 
-{
-    repositories 
-    {
-        jcenter()
-        maven { url = "http://files.minecraftforge.net/maven" }
+buildscript {
+    repositories {
+        mavenCentral()
+        maven { url = "https://files.minecraftforge.net/maven" }
+        maven { url = "https://repo.spongepowered.org/maven" }
     }
-    
-    dependencies 
-    {
+    dependencies {
         classpath 'net.minecraftforge.gradle:ForgeGradle:2.3-SNAPSHOT'
     }
 }
 
 apply plugin: 'net.minecraftforge.gradle.forge'
+apply plugin: 'java'
+apply plugin: 'eclipse'
+apply plugin: 'idea'
 
+version = "${version}"
 group = "mchorse.skin_n_bones"
 archivesBaseName = "skin_n_bones"
-sourceCompatibility = targetCompatibility = "1.8"
 
-if (project.hasProperty("dev")) 
-{
-    version += "-dev" + dev
+sourceCompatibility = targetCompatibility = '1.8'
+compileJava {
+    sourceCompatibility = targetCompatibility = '1.8'
 }
 
-compileJava 
-{
-    sourceCompatibility = targetCompatibility = "1.8"
-}
-
-minecraft 
-{
+minecraft {
     version = "${mc_version}-${forge_version}"
     runDir = "run"
     mappings = snapshot
     
-    clientJvmArgs = ["-Xmx1G"]
-    serverJvmArgs = ["-Xmx1G"]
-    
     replace "%VERSION%", project.version
     replace "%MCLIB%", project.mclib
     replace "%METAMORPH%", project.metamorph
+    
+    clientJvmArgs = ["-Xmx2G"]
+    serverJvmArgs = ["-Xmx2G"]
 }
 
-dependencies 
-{
+configurations {
+    shade
+    compile.extendsFrom shade
+}
+
+dependencies {
+    // Основные зависимости мода
     compile files("run/libs/metamorph-${metamorph}-${project.minecraft.version}-dev.jar")
     compile files("run/libs/mclib-${mclib}-${project.minecraft.version}-dev.jar")
+    
+    // GPU зависимости
+    def lwjglVersion = "3.2.3"
+    shade "org.lwjgl:lwjgl:${lwjglVersion}"
+    shade "org.lwjgl:lwjgl-opengl:${lwjglVersion}"
+    
+    // Платформо-зависимые нативные библиотеки LWJGL
+    shade "org.lwjgl:lwjgl:${lwjglVersion}:natives-windows"
+    shade "org.lwjgl:lwjgl:${lwjglVersion}:natives-linux"
+    shade "org.lwjgl:lwjgl:${lwjglVersion}:natives-macos"
+    shade "org.lwjgl:lwjgl-opengl:${lwjglVersion}:natives-windows"
+    shade "org.lwjgl:lwjgl-opengl:${lwjglVersion}:natives-linux"
+    shade "org.lwjgl:lwjgl-opengl:${lwjglVersion}:natives-macos"
 }
 
-processResources
-{
+processResources {
+    // Исключаем файлы thumbs.db и ds_store
+    exclude '**/*.db'
+    exclude '**/*.DS_Store'
+    
+    // Обработка mcmod.info
     inputs.property "version", project.version
     inputs.property "mcversion", project.minecraft.version
-
-    project.version += "-" + project.minecraft.version
-
+    
     from(sourceSets.main.resources.srcDirs) {
         include 'mcmod.info'
-                
         expand 'version':project.version, 'mcversion':project.minecraft.version
     }
-        
+    
+    // Копируем всё остальное
     from(sourceSets.main.resources.srcDirs) {
         exclude 'mcmod.info'
     }
+    
+    // Копируем шейдеры
+    from('src/main/resources/assets/snb/shaders') {
+        include '**/*.comp'
+        include '**/*.vert'
+        include '**/*.frag'
+        into 'assets/snb/shaders'
+    }
+}
+
+jar {
+    // Включаем зависимости в JAR
+    from configurations.shade.collect { 
+        it.isDirectory() ? it : zipTree(it) 
+    }
+    
+    // Исключаем ненужные файлы из зависимостей
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+    
+    manifest {
+        attributes(
+            'Specification-Title': 'Skin & Bones',
+            'Specification-Vendor': 'mchorse',
+            'Specification-Version': '1',
+            'Implementation-Title': project.name,
+            'Implementation-Version': version,
+            'Implementation-Vendor': 'mchorse',
+            'Implementation-Timestamp': new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
+        )
+    }
+}
+
+// Задача для настройки среды разработки
+task setupDevWorkspace(dependsOn: ['setupDecompWorkspace', 'eclipse', 'idea'])
+
+// Задача для создания исходников
+task sourcesJar(type: Jar, dependsOn: classes) {
+    classifier = 'sources'
+    from sourceSets.main.allSource
+}
+
+// Задача для создания javadoc
+task javadocJar(type: Jar, dependsOn: javadoc) {
+    classifier = 'javadoc'
+    from javadoc.destinationDir
+}
+
+// Добавляем задачи в артефакты
+artifacts {
+    archives sourcesJar
+    archives javadocJar
+}
+
+// Настройка IDE
+eclipse {
+    classpath {
+        downloadSources = true
+        downloadJavadoc = true
+    }
+}
+
+idea {
+    module {
+        downloadSources = true
+        downloadJavadoc = true
+    }
+}
+
+// Настройка компиляции
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+    options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation"
+}
+
+// Добавляем суффикс dev для разработки
+if (project.hasProperty('dev')) {
+    version += "-dev" + dev
 }
